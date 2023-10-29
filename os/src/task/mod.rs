@@ -9,6 +9,7 @@
 //! Be careful when you see `__switch` ASM function in `switch.S`. Control flow around this function
 //! might not be what you expect.
 
+mod info;
 mod context;
 mod switch;
 #[allow(clippy::module_inception)]
@@ -17,12 +18,13 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
 
 pub use context::TaskContext;
-
+pub use info::TaskInfo;
 /// The task manager, where all the tasks are managed.
 ///
 /// Functions implemented on `TaskManager` deals with all task state transitions
@@ -53,6 +55,7 @@ lazy_static! {
         let num_app = get_num_app();
         let mut tasks = [TaskControlBlock {
             task_cx: TaskContext::zero_init(),
+            task_info: TaskInfo::zero_init(),
             task_status: TaskStatus::UnInit,
         }; MAX_APP_NUM];
         for (i, task) in tasks.iter_mut().enumerate() {
@@ -80,6 +83,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let task0 = &mut inner.tasks[0];
         task0.task_status = TaskStatus::Running;
+        task0.task_info.start_time = get_time_ms();
         let next_task_cx_ptr = &task0.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -122,6 +126,9 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            if inner.tasks[next].task_info.start_time == info::INVALID_TIME {
+                inner.tasks[next].task_info.start_time = get_time_ms();
+            }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -134,6 +141,26 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+
+    fn syscall_count_incr(&self, syscall_id: usize) {
+        let mut inner = TASK_MANAGER.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_info.syscall_times[syscall_id] += 1;
+    }
+
+    /// Get the number of system calls
+    fn get_syscall_count(&self) -> [u32; info::MAX_SYSCALL_NUM] {
+        let inner = TASK_MANAGER.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_info.syscall_times
+    }
+    /// Get the program start running time
+    fn get_program_start_time(&self) -> usize {
+        let inner = TASK_MANAGER.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].task_info.start_time
     }
 }
 
@@ -168,4 +195,19 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Add one to the number of system calls for the specified syscall_id
+pub fn syscall_count_incr(syscall_id: usize) {
+    TASK_MANAGER.syscall_count_incr(syscall_id);
+}
+
+/// Get the number of system calls
+pub fn get_syscall_count() -> [u32; info::MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_syscall_count()
+}
+
+/// Get the program start running time
+pub fn get_program_start_time() -> usize {
+    TASK_MANAGER.get_program_start_time()
 }
