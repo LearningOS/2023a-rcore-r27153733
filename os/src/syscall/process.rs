@@ -63,6 +63,7 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     ti.status = TaskStatus::Running;
     ti.syscall_times = get_syscall_times();
     ti.time = get_time_ms() - get_program_start_time();
+    debug!("now time: {:?}, start time: {:?}", get_time_ms(), get_program_start_time());
     0
 }
 

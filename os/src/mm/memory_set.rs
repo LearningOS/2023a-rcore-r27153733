@@ -102,14 +102,14 @@ impl MemorySet {
     ) -> isize {
         
         let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
-
+        
         for vpn in vpn_range {
             if let Some(pte) = self.page_table.translate(vpn) {
                 if !pte.is_valid() {
                     return -1;
-                } else {
-                    return -1;
                 }
+            } else {
+                return -1;
             }
         }
 

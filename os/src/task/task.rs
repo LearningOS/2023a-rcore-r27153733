@@ -65,7 +65,7 @@ impl TaskControlBlock {
         let syscall_times = [0; MAX_SYSCALL_NUM];
 
         let task_control_block = Self {
-            start_time: 0,
+            start_time: usize::MAX,
             syscall_times,
             task_status,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
