@@ -3,7 +3,7 @@ use crate::{
     config::MAX_SYSCALL_NUM,
     task::{
         change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, current_user_token, mmap, munmap, get_syscall_times, get_program_start_time,
-    }, timer::{get_time_us, get_time_ms}, mm::{translated_ptr, VirtAddr},
+    }, timer::get_time_us, mm::{translated_ptr, VirtAddr},
 };
 
 #[repr(C)]
@@ -62,8 +62,9 @@ pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
     let ti = unsafe { &mut *translated_ptr(current_user_token(), ti) };
     ti.status = TaskStatus::Running;
     ti.syscall_times = get_syscall_times();
-    ti.time = get_time_ms() - get_program_start_time();
-    debug!("now time: {:?}, start time: {:?}", get_time_ms(), get_program_start_time());
+    ti.time = get_time_us() - get_program_start_time();
+    ti.time /= 1000;
+    debug!("now time: {:?}, start time: {:?}, time: {:?}", get_time_us(), get_program_start_time(), ti.time);
     0
 }
 

@@ -80,7 +80,7 @@ impl TaskManager {
     fn run_first_task(&self) -> ! {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
-        next_task.start_time = super::timer::get_time_ms();
+        next_task.start_time = super::timer::get_time_us();
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
@@ -143,7 +143,7 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             if inner.tasks[current].start_time == usize::MAX {
-                inner.tasks[current].start_time = super::timer::get_time_ms();
+                inner.tasks[current].start_time = super::timer::get_time_us();
             }
             inner.tasks[next].task_status = TaskStatus::Running;
             inner.current_task = next;
