@@ -14,7 +14,9 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{VirtAddr, MapPermission};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -79,6 +81,7 @@ impl TaskManager {
         let mut inner = self.inner.exclusive_access();
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
+        next_task.start_time = super::timer::get_time_ms();
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
         drop(inner);
         let mut _unused = TaskContext::zero_init();
@@ -140,6 +143,9 @@ impl TaskManager {
             let mut inner = self.inner.exclusive_access();
             let current = inner.current_task;
             inner.tasks[next].task_status = TaskStatus::Running;
+            if inner.tasks[current].start_time == 0 {
+                inner.tasks[current].start_time = super::timer::get_time_ms();
+            }
             inner.current_task = next;
             let current_task_cx_ptr = &mut inner.tasks[current].task_cx as *mut TaskContext;
             let next_task_cx_ptr = &inner.tasks[next].task_cx as *const TaskContext;
@@ -152,6 +158,61 @@ impl TaskManager {
         } else {
             panic!("All applications completed!");
         }
+    }
+
+    /// Incr the number of system calls
+    fn incr_syscall_times(&self, syscall_id: usize) {
+        let mut inner = TASK_MANAGER.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times[syscall_id] += 1;
+    }
+
+    /// Get the number of system calls
+    fn get_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        let inner = TASK_MANAGER.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].syscall_times
+    }
+    /// Get the program start running time
+    fn get_program_start_time(&self) -> usize {
+        let inner = TASK_MANAGER.inner.exclusive_access();
+        let current = inner.current_task;
+        inner.tasks[current].start_time
+    }
+
+    /// 申请物理内存，将其映射到 start_va 开始, end_va 结束的虚存，内存页属性为 port
+    fn mmap(&self, start_va: VirtAddr, end_va: VirtAddr, port: usize) -> isize {
+        
+        if !start_va.aligned() || port & !0x7 != 0 || port & 0x7 == 0 {
+            return -1;
+        }
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        
+        let mut permission: MapPermission = MapPermission::U | MapPermission::U;
+        if port & 0b1 == 0b1 {
+            permission |= MapPermission::R;
+        }
+        if port & 0b10 == 0b10 {
+            permission |= MapPermission::W;
+        }
+        if port & 0b100 == 0b100 {
+            permission |= MapPermission::X;
+        }
+        
+        inner.tasks[current].memory_set.mmap(start_va, end_va, permission)
+    }
+
+    /// 取消 start_va 开始, end_va 结束的虚存的映射
+    fn munmap(&self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        
+        if !start_va.aligned() {
+            return -1;
+        }
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+
+        inner.tasks[current].memory_set.munmap(start_va, end_va)
     }
 }
 
@@ -201,4 +262,28 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Incr the number of system calls
+pub fn incr_syscall_times(syscall_id: usize) {
+    TASK_MANAGER.incr_syscall_times(syscall_id);
+}
+
+/// Get the number of system calls
+pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    TASK_MANAGER.get_syscall_times()
+}
+
+/// Get the program start running time
+pub fn get_program_start_time() -> usize {
+    TASK_MANAGER.get_program_start_time()
+}
+
+/// 申请物理内存，将其映射到 start_va 开始, end_va 结束的虚存，内存页属性为 port
+pub fn mmap(start_va: VirtAddr, end_va: VirtAddr, port: usize) -> isize {
+    TASK_MANAGER.mmap(start_va, end_va, port)
+}
+/// 取消 start_va 开始, end_va 结束的虚存的映射
+pub fn munmap(start_va: VirtAddr, end_va: VirtAddr) -> isize {
+    TASK_MANAGER.munmap(start_va, end_va)
 }

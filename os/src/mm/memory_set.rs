@@ -37,6 +37,7 @@ lazy_static! {
 pub struct MemorySet {
     page_table: PageTable,
     areas: Vec<MapArea>,
+    data_frames_for_mmap: BTreeMap<VirtPageNum, FrameTracker>,
 }
 
 impl MemorySet {
@@ -45,6 +46,7 @@ impl MemorySet {
         Self {
             page_table: PageTable::new(),
             areas: Vec::new(),
+            data_frames_for_mmap: BTreeMap::new(),
         }
     }
     /// Get the page table token
@@ -63,6 +65,61 @@ impl MemorySet {
             None,
         );
     }
+
+    /// 申请物理内存，将其映射到 start_va 开始, end_va 结束的虚存，内存页属性为 port
+    pub fn mmap(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+        permission: MapPermission,
+    ) -> isize {
+        let map_area = MapArea::new(start_va, end_va, MapType::Framed, permission);
+
+        for vpn in map_area.vpn_range {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if pte.is_valid() {
+                    return -1;
+                }
+            }
+        }
+
+        for vpn in map_area.vpn_range {
+            let ppn: PhysPageNum;
+            let frame = frame_alloc().unwrap();
+            ppn = frame.ppn;
+            self.data_frames_for_mmap.insert(vpn, frame);
+            let pte_flags = PTEFlags::from_bits(map_area.map_perm.bits).unwrap();
+            self.page_table.map(vpn, ppn, pte_flags);
+        }
+        0
+    }
+
+    /// 取消 start_va 开始, end_va 结束的虚存的映射
+    pub fn munmap(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+    ) -> isize {
+        
+        let vpn_range = VPNRange::new(start_va.floor(), end_va.ceil());
+
+        for vpn in vpn_range {
+            if let Some(pte) = self.page_table.translate(vpn) {
+                if !pte.is_valid() {
+                    return -1;
+                } else {
+                    return -1;
+                }
+            }
+        }
+
+        for vpn in vpn_range {
+            self.data_frames_for_mmap.remove(&vpn);
+            self.page_table.unmap(vpn);
+        }
+        0
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
