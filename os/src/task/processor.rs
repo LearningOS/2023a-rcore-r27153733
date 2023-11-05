@@ -7,7 +7,10 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::MAX_SYSCALL_NUM;
+use crate::mm::{MapPermission, VirtAddr};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_us;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -60,6 +63,9 @@ pub fn run_tasks() {
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
+            if task_inner.start_time == 0 {
+                task_inner.start_time = get_time_us();
+            }
             task_inner.task_status = TaskStatus::Running;
             // release coming task_inner manually
             drop(task_inner);
@@ -108,4 +114,63 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Incr the number of system calls
+pub fn incr_syscall_times(syscall_id: usize) {
+    let task = current_task().unwrap();
+    task.inner_exclusive_access().syscall_times[syscall_id] += 1;
+}
+
+/// Get the number of system calls
+pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    let task = current_task().unwrap();
+    let res = task.inner_exclusive_access().syscall_times;
+    res
+}
+/// Get the program start running time
+pub fn get_program_start_time() -> usize {
+    let task = current_task().unwrap();
+
+    let res = task.inner_exclusive_access().start_time;
+    res
+}
+
+/// 申请物理内存，将其映射到 start_va 开始, end_va 结束的虚存，内存页属性为 port
+pub fn mmap(start_va: VirtAddr, end_va: VirtAddr, port: usize) -> isize {
+    if !start_va.aligned() || port & !0x7 != 0 || port & 0x7 == 0 {
+        return -1;
+    }
+
+    let task = current_task().unwrap();
+
+    let mut permission: MapPermission = MapPermission::U | MapPermission::U;
+    if port & 0b1 == 0b1 {
+        permission |= MapPermission::R;
+    }
+    if port & 0b10 == 0b10 {
+        permission |= MapPermission::W;
+    }
+    if port & 0b100 == 0b100 {
+        permission |= MapPermission::X;
+    }
+
+    let res = task
+        .inner_exclusive_access()
+        .memory_set
+        .mmap(start_va, end_va, permission);
+    res
+}
+
+/// 取消 start_va 开始, end_va 结束的虚存的映射
+pub fn munmap(start_va: VirtAddr, end_va: VirtAddr) -> isize {
+    if !start_va.aligned() {
+        return -1;
+    }
+    let task = current_task().unwrap();
+    let res = task
+        .inner_exclusive_access()
+        .memory_set
+        .munmap(start_va, end_va);
+    res
 }

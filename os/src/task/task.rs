@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -49,6 +49,12 @@ pub struct TaskControlBlockInner {
 
     /// Maintain the execution status of the current process
     pub task_status: TaskStatus,
+
+    /// The numbers of syscall called by task
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    /// Program start time
+    pub start_time: usize,
 
     /// Application address space
     pub memory_set: MemorySet,
@@ -112,6 +118,8 @@ impl TaskControlBlock {
                     base_size: user_sp,
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_time: 0,
                     memory_set,
                     parent: None,
                     children: Vec::new(),
@@ -150,6 +158,10 @@ impl TaskControlBlock {
         inner.trap_cx_ppn = trap_cx_ppn;
         // initialize base_size
         inner.base_size = user_sp;
+        // initialize syscall_times
+        inner.syscall_times = [0; MAX_SYSCALL_NUM];
+        // initialize start_time
+        inner.start_time = 0;
         // initialize trap_cx
         let trap_cx = inner.get_trap_cx();
         *trap_cx = TrapContext::app_init_context(
@@ -185,6 +197,8 @@ impl TaskControlBlock {
                     base_size: parent_inner.base_size,
                     task_cx: TaskContext::goto_trap_return(kernel_stack_top),
                     task_status: TaskStatus::Ready,
+                    syscall_times: parent_inner.syscall_times,
+                    start_time: parent_inner.start_time,
                     memory_set,
                     parent: Some(Arc::downgrade(self)),
                     children: Vec::new(),
