@@ -131,7 +131,6 @@ pub fn get_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
 /// Get the program start running time
 pub fn get_program_start_time() -> usize {
     let task = current_task().unwrap();
-
     let res = task.inner_exclusive_access().start_time;
     res
 }

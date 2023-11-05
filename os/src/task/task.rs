@@ -1,7 +1,7 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::{TRAP_CONTEXT_BASE, MAX_SYSCALL_NUM};
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE, BIG_STRIDE};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
@@ -74,6 +74,12 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// Priority
+    pub priority: usize,
+
+    /// Stride
+    pub stride: u64,
 }
 
 impl TaskControlBlockInner {
@@ -90,6 +96,11 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+
+    pub fn stride_stap(&mut self) {
+        // debug!("{:?}", self.priority);
+        self.stride += (BIG_STRIDE / self.priority) as u64;
     }
 }
 
@@ -126,6 +137,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority: 16,
+                    stride: 0,
                 })
             },
         };
@@ -162,6 +175,10 @@ impl TaskControlBlock {
         inner.syscall_times = [0; MAX_SYSCALL_NUM];
         // initialize start_time
         inner.start_time = 0;
+        // initialize priority
+        inner.priority = 16;
+        // initialize stride
+        inner.stride = 0;
         // initialize trap_cx
         let trap_cx = inner.get_trap_cx();
         *trap_cx = TrapContext::app_init_context(
@@ -205,6 +222,8 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority: parent_inner.priority,
+                    stride: parent_inner.stride,
                 })
             },
         });
@@ -218,6 +237,18 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// spawn a new process
+    pub fn spawn(self: &Arc<Self>, elf_data: &[u8]) -> Arc<Self> {
+        let tcb = Arc::new(TaskControlBlock::new(elf_data));
+        // ---- access parent PCB exclusively
+        let mut parent_inner = self.inner_exclusive_access();
+        // add child
+        parent_inner.children.push(tcb.clone());
+        tcb.inner.exclusive_access().parent = Some(Arc::downgrade(self));
+        // return
+        tcb
     }
 
     /// get pid of process
